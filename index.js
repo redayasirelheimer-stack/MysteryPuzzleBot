@@ -9,11 +9,11 @@ const client = new Client({
     ]
 });
 
-// تخزين بيانات اللغز الحالي
 let currentPuzzle = null;
+let puzzleTimeout = null;
 
 client.on('ready', () => {
-    console.log(`🤖 البوت متصل الآن باسم: ${client.user.tag}`);
+    console.log(`🤖 البوت جاهز ومتصل باسم: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
@@ -22,18 +22,17 @@ client.on('messageCreate', async (message) => {
     const args = message.content.split(' ');
     const command = args[0].toLowerCase();
 
-    // 1. أمر بدء لغز جديد (للإدارة فقط)
-    // الاستخدام: !startpuzzle <الأيام> | <السؤال> | <الإجابة الصحيحة> | <العقوبة>
+    // 1. أمر بدء لغز جديد (في السيرفر)
     if (command === '!startpuzzle') {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return message.reply('❌ هذا الأمر مخصص للإدارة فقط!');
+        if (!message.guild || !message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return message.reply('❌ هذا الأمر مخصص للإدارة داخل السيرفر فقط!');
         }
 
         const rawContent = message.content.slice('!startpuzzle'.length).trim();
         const parts = rawContent.split('|').map(p => p.trim());
 
         if (parts.length < 4) {
-            return message.reply('⚠️ الصيغة خاطئة!\nالاستخدام الصحيح:\n`!startpuzzle <عدد الأيام> | <اللغز> | <الإجابة> | <العقوبة في حال الخسارة>`');
+            return message.reply('⚠️ الصيغة خاطئة!\nالاستخدام:\n`!startpuzzle عدد الأيام | السؤال | الإجابة الصحيحة | العقوبة`');
         }
 
         const days = parseInt(parts[0]);
@@ -42,22 +41,20 @@ client.on('messageCreate', async (message) => {
         const penalty = parts[3];
 
         if (isNaN(days) || days <= 0) {
-            return message.reply('❌ يرجى تحديد عدد أيام صحيح للمهلة.');
+            return message.reply('❌ يرجى تحديد عدد أيام صحيح.');
         }
 
-        const endTime = Date.now() + (days * 24 * 60 * 60 * 1000);
-
+        // حفظ اللغز ومُعرّف الروم
         currentPuzzle = {
             question,
             answer,
             penalty,
-            endTime,
-            solved: false,
-            channelId: message.channel.id
+            channelId: message.channel.id,
+            solved: false
         };
 
         const embed = new EmbedBuilder()
-            .setTitle('🧩 بدء لغز الأسبوع الجديد!')
+            .setTitle('🧩 لغز جديد وصل!')
             .setDescription(`**اللغز:**\n${question}`)
             .addFields(
                 { name: '⏳ المهلة الزمنية', value: `${days} أيام`, inline: true },
@@ -68,12 +65,12 @@ client.on('messageCreate', async (message) => {
 
         message.channel.send({ embeds: [embed] });
 
-        // مؤقت ينتهي بانتهاء المهلة
-        setTimeout(() => {
+        if (puzzleTimeout) clearTimeout(puzzleTimeout);
+        puzzleTimeout = setTimeout(() => {
             if (currentPuzzle && !currentPuzzle.solved) {
                 const failEmbed = new EmbedBuilder()
                     .setTitle('⏰ انتهت المهلة ولم يتم حل اللغز!')
-                    .setDescription(`لأسف لم يستطع أحد حل اللغز في الوقت المحدد.\n\n**الإجابة الصحيحة كانت:** ${currentPuzzle.answer}\n**العقوبة المطبقة:** ${currentPuzzle.penalty}`)
+                    .setDescription(`للأسف لم يستطع أحد حل اللغز في الوقت المحدد.\n\n**الإجابة الصحيحة كانت:** ${currentPuzzle.answer}\n**العقوبة المطبقة:** ${currentPuzzle.penalty}`)
                     .setColor('#E74C3C');
                 
                 message.channel.send({ embeds: [failEmbed] });
@@ -84,30 +81,40 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 2. أمر إرسال تلميح/دليل لعضو معين في الخاص (للإدارة فقط)
-    // الاستخدام: !clue @User النص
+    // 2. أمر إرسال التلميح (يعمل في الخاص أو في السيرفر بشكل خفي)
     if (command === '!clue') {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return message.reply('❌ هذا الأمر مخصص للإدارة فقط!');
+        if (!currentPuzzle) {
+            return message.reply('❌ لا يوجد لغز نشط حالياً لإرسال تلميح له!');
         }
 
-        const targetUser = message.mentions.users.first();
-        if (!targetUser) return message.reply('❌ يرجى منشن العضو المراد إرسال الدليل له.');
+        const clueText = args.slice(1).join(' ');
+        if (!clueText) return message.reply('❌ يرجى كتابة نص التلميح.');
 
-        const clueText = args.slice(2).join(' ');
-        if (!clueText) return message.reply('❌ يرجى كتابة نص الدليل.');
+        const clueEmbed = new EmbedBuilder()
+            .setTitle('🕵️ تلميح جديد للجميع!')
+            .setDescription(`**الدليل:**\n"${clueText}"`)
+            .setColor('#3498DB')
+            .setFooter({ text: 'ركزوا جيداً للوصول إلى الحل الصحيح!' });
 
+        // العثور على روم اللغز ونشر التلميح فيها
         try {
-            await targetUser.send(`🕵️ **وصلك جزء من حل لغز الأسبوع:**\n"${clueText}"\n\n*تعاون مع زملائك في السيرفر للوصول للحل الكامل!*`);
-            message.reply(`✅ تم إرسال الدليل بنجاح إلى ${targetUser.tag} في الخاص.`);
+            const puzzleChannel = await client.channels.fetch(currentPuzzle.channelId);
+            await puzzleChannel.send({ embeds: [clueEmbed] });
+
+            // إذا أرسلت الأمر في الخاص للبوت، يرسل لك تأكيداً
+            if (!message.guild) {
+                message.reply('✅ تم نشر التلميح بنجاح في السيرفر دون أن يعلم أحد مصدره!');
+            } else {
+                // إذا أرسلته في السيرفر، يحذف رسالتك فوراً بلمح البصر
+                message.delete().catch(() => {});
+            }
         } catch (err) {
-            message.reply('❌ لم أستطع إرسال رسالة خاصة لهذا العضو (قد تكون رسائله الخاصة مغلقة).');
+            message.reply('❌ تعذر إرسال التلميح إلى الروم.');
         }
         return;
     }
 
-    // 3. أمر إجابة اللغز (لجميع الأعضاء)
-    // الاستخدام: !solve الإجابة
+    // 3. أمر حل اللغز (للأعضاء في السيرفر)
     if (command === '!solve') {
         if (!currentPuzzle) {
             return message.reply('❌ لا يوجد لغز نشط حالياً!');
@@ -118,20 +125,21 @@ client.on('messageCreate', async (message) => {
         }
 
         const userAnswer = args.slice(1).join(' ').trim().toLowerCase();
-        if (!userAnswer) return message.reply('❌ يرجى كتابة إجابتك بعد الأمر.');
+        if (!userAnswer) return message.reply('❌ يرجى كتابة إجابتك.');
 
         if (userAnswer === currentPuzzle.answer) {
             currentPuzzle.solved = true;
+            if (puzzleTimeout) clearTimeout(puzzleTimeout);
 
             const winEmbed = new EmbedBuilder()
                 .setTitle('🎉 مبروك! تم حل اللغز بنجاح!')
-                .setDescription(`قام البطل ${message.author} بالتوصل للحل الصحيح!\n\n**الإجابة:** ${currentPuzzle.answer}\n🏆 **تستحقون الجائزة الأسبوعية!**`)
+                .setDescription(`قام البطل ${message.author} بالتوصل للحل الصحيح!\n\n**الإجابة:** ${currentPuzzle.answer}\n🏆 **تستحقون الجائزة!**`)
                 .setColor('#2ECC71');
 
             message.channel.send({ embeds: [winEmbed] });
             currentPuzzle = null;
         } else {
-            message.reply('❌ إجابة خاطئة! حاول مجدداً أو تعاون مع من وصلتهم الأدلة.');
+            message.reply('❌ إجابة خاطئة! حاول مجدداً.');
         }
         return;
     }

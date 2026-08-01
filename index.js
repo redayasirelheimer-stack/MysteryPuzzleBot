@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -6,7 +6,8 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages
-    ]
+    ],
+    partials: [Partials.Channel, Partials.Message]
 });
 
 let currentPuzzle = null;
@@ -44,7 +45,6 @@ client.on('messageCreate', async (message) => {
             return message.reply('❌ يرجى تحديد عدد أيام صحيح.');
         }
 
-        // حفظ اللغز ومُعرّف الروم
         currentPuzzle = {
             question,
             answer,
@@ -81,7 +81,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 2. أمر إرسال التلميح (يعمل في الخاص أو في السيرفر بشكل خفي)
+    // 2. أمر إرسال التلميح (في الخاص أو في السيرفر)
     if (command === '!clue') {
         if (!currentPuzzle) {
             return message.reply('❌ لا يوجد لغز نشط حالياً لإرسال تلميح له!');
@@ -96,16 +96,13 @@ client.on('messageCreate', async (message) => {
             .setColor('#3498DB')
             .setFooter({ text: 'ركزوا جيداً للوصول إلى الحل الصحيح!' });
 
-        // العثور على روم اللغز ونشر التلميح فيها
         try {
             const puzzleChannel = await client.channels.fetch(currentPuzzle.channelId);
             await puzzleChannel.send({ embeds: [clueEmbed] });
 
-            // إذا أرسلت الأمر في الخاص للبوت، يرسل لك تأكيداً
             if (!message.guild) {
                 message.reply('✅ تم نشر التلميح بنجاح في السيرفر دون أن يعلم أحد مصدره!');
             } else {
-                // إذا أرسلته في السيرفر، يحذف رسالتك فوراً بلمح البصر
                 message.delete().catch(() => {});
             }
         } catch (err) {
@@ -114,7 +111,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // 3. أمر حل اللغز (للأعضاء في السيرفر)
+    // 3. أمر حل اللغز (للأعضاء)
     if (command === '!solve') {
         if (!currentPuzzle) {
             return message.reply('❌ لا يوجد لغز نشط حالياً!');
